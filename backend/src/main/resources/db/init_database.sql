@@ -1,0 +1,3 @@
+-- 建库语句单独放：schema.sql 里执行 CREATE DATABASE 会因当前连接未选库而失败，
+-- 所以库由 README 里的一条命令建，表由应用启动时建。
+-- CREATE DATABASE IF NOT EXISTS yujian_im DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;

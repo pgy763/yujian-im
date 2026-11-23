@@ -1,0 +1,1545 @@
+/*
+ * 样式说明（面试时可能被问"为什么这么写"，这里的每条决策都有理由）
+ *
+ * 1. 输入框自动长高用 CSS 的 field-sizing: content，不用 JS 监听 input 再算 scrollHeight。
+ *    查过 modern-web-guidance 的 form-fields-automatically-fit-contents：
+ *    JS 方案每次输入都要读 scrollHeight（强制重排）+ 写 style（再重排），
+ *    一行 CSS 就能交给浏览器排版引擎，还顺带支持了 placeholder 撑高。
+ *    降级：field-sizing 是较新的属性，不支持的浏览器会让 textarea 保持固定 3 行高度，
+ *    只是不能自动长高，不影响发消息。
+ *
+ * 2. 滚动条只写 ::-webkit-scrollbar 是不够的，新标准是 scrollbar-width / scrollbar-color，
+ *    两个都写才能覆盖 Chrome / Firefox。注意：只要写了 scrollbar-color，
+ *    该元素的 ::-webkit-scrollbar 就失效（规范这么规定），所以两套值必须一致。
+ *
+ * 3. 群聊创建用原生 <dialog>，它自带 top-layer（永远盖在 z-index 最高的元素之上，
+ *    不会被父元素的 overflow 裁掉）和 ESC 关闭、焦点陷阱，不用自己算层级。
+ *
+ * 4. 深色模式走 color-scheme + light-dark()：color-scheme 告诉浏览器"这个页面两套配色都支持"，
+ *    浏览器就会把滚动条、输入框内部、dialog 的 backdrop 这些原生 UI 一起换掉，
+ *    不用我们去重写每一个控件。不支持 light-dark() 的浏览器由
+ *    @media (prefers-color-scheme: dark) 那段兜底（color-scheme 本身是渐进增强）。
+ *
+ * 5. 所有动画都包在 @media (prefers-reduced-motion: no-preference) 里。
+ *    guidance 明确建议"默认静态、需要时才开动画"，而不是先写死动画再用
+ *    animation: none 去关 —— 后者容易漏掉 transition，且对前庭敏感用户不友好。
+ *
+ * 6. 颜色全部走 CSS 变量（design token），所以换主题只改 :root，组件里没有硬编码色值。
+ *
+ * 7. 消息列表上下边缘的"还有内容"阴影用 scroll-state 容器查询做，不用 scroll 事件：
+ *    .message-list 声明 container-type: scroll-state，它的 ::before/::after 就能用
+ *    @container scroll-state(scrollable: block-start/block-end) 判断"上方/下方还有没有内容"。
+ *    查过 modern-web-guidance 的 scrollability-affordance-hints：
+ *    监听 scroll 事件再算 scrollTop/scrollHeight 会在每帧里读布局属性（强制同步重排），
+ *    而且是 JS 线程的事；scroll-state 是浏览器在合成线程判定的，滚到顶/底自动消失。
+ *    整段包在 @supports (container-type: scroll-state) 里：不支持时一个伪元素都不加，
+ *    布局完全不变，只是没有阴影。
+ *
+ * 8. 头像颜色由用户名 hash 出来的色相决定（--av-hue），不额外存字段、不用图片。
+ *    同一个人在任何界面永远是同一个颜色，群聊里十几个头像不会糊成一片。
+ */
+
+/* ---------------------------------------------------------------- 设计令牌 */
+
+:root {
+  /* 浅色 */
+  --bg-l: #f2f4f8;
+  --panel-l: #ffffff;
+  --panel-2-l: #fafbfd;
+  --border-l: #e4e7ee;
+  --border-strong-l: #d3d8e3;
+  --text-l: #15181f;
+  --text-weak-l: #6b7280;
+  --primary-l: #3b6cf6;
+  --primary-2-l: #5b8bff;
+  --primary-soft-l: #eaf0ff;
+  --bubble-me-l: #3b6cf6;
+  --bubble-me-2-l: #5b8bff;
+  --bubble-other-l: #ffffff;
+  --danger-l: #e5484d;
+  --ok-l: #14a05a;
+  --shadow-l: 0 1px 2px rgba(17, 24, 39, 0.04), 0 8px 24px rgba(17, 24, 39, 0.06);
+
+  /* 深色 */
+  --bg-d: #0d0f13;
+  --panel-d: #161920;
+  --panel-2-d: #1b1f28;
+  --border-d: #262c38;
+  --border-strong-d: #333b4a;
+  --text-d: #e7eaf0;
+  --text-weak-d: #8b93a5;
+  --primary-d: #6b8cff;
+  --primary-2-d: #8aa4ff;
+  --primary-soft-d: #1e2740;
+  --bubble-me-d: #3a5bd9;
+  --bubble-me-2-d: #4c6ef5;
+  --bubble-other-d: #1b1f28;
+  --danger-d: #ff6b6f;
+  --ok-d: #3ddc84;
+  --shadow-d: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
+
+  /* 默认给浅色（老浏览器兜底） */
+  --bg: var(--bg-l);
+  --panel: var(--panel-l);
+  --panel-2: var(--panel-2-l);
+  --border: var(--border-l);
+  --border-strong: var(--border-strong-l);
+  --text: var(--text-l);
+  --text-weak: var(--text-weak-l);
+  --primary: var(--primary-l);
+  --primary-2: var(--primary-2-l);
+  --primary-soft: var(--primary-soft-l);
+  --bubble-me: var(--bubble-me-l);
+  --bubble-me-2: var(--bubble-me-2-l);
+  --bubble-other: var(--bubble-other-l);
+  --danger: var(--danger-l);
+  --ok: var(--ok-l);
+  --shadow: var(--shadow-l);
+
+  --radius: 12px;
+  --radius-lg: 16px;
+
+  /* 通知浏览器：原生 UI（滚动条、输入框内部、dialog backdrop）跟随配色方案 */
+  color-scheme: light dark;
+}
+
+/* 兜底：支持 color-scheme 但不支持 light-dark() 的浏览器 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: var(--bg-d);
+    --panel: var(--panel-d);
+    --panel-2: var(--panel-2-d);
+    --border: var(--border-d);
+    --border-strong: var(--border-strong-d);
+    --text: var(--text-d);
+    --text-weak: var(--text-weak-d);
+    --primary: var(--primary-d);
+    --primary-2: var(--primary-2-d);
+    --primary-soft: var(--primary-soft-d);
+    --bubble-me: var(--bubble-me-d);
+    --bubble-me-2: var(--bubble-me-2-d);
+    --bubble-other: var(--bubble-other-d);
+    --danger: var(--danger-d);
+    --ok: var(--ok-d);
+    --shadow: var(--shadow-d);
+  }
+}
+
+/* 首选：light-dark() 跟着元素实际算出来的 color-scheme 走 */
+@supports (color: light-dark(white, black)) {
+  :root {
+    --bg: light-dark(var(--bg-l), var(--bg-d));
+    --panel: light-dark(var(--panel-l), var(--panel-d));
+    --panel-2: light-dark(var(--panel-2-l), var(--panel-2-d));
+    --border: light-dark(var(--border-l), var(--border-d));
+    --border-strong: light-dark(var(--border-strong-l), var(--border-strong-d));
+    --text: light-dark(var(--text-l), var(--text-d));
+    --text-weak: light-dark(var(--text-weak-l), var(--text-weak-d));
+    --primary: light-dark(var(--primary-l), var(--primary-d));
+    --primary-2: light-dark(var(--primary-2-l), var(--primary-2-d));
+    --primary-soft: light-dark(var(--primary-soft-l), var(--primary-soft-d));
+    --bubble-me: light-dark(var(--bubble-me-l), var(--bubble-me-d));
+    --bubble-me-2: light-dark(var(--bubble-me-2-l), var(--bubble-me-2-d));
+    --bubble-other: light-dark(var(--bubble-other-l), var(--bubble-other-d));
+    --danger: light-dark(var(--danger-l), var(--danger-d));
+    --ok: light-dark(var(--ok-l), var(--ok-d));
+    --shadow: light-dark(var(--shadow-l), var(--shadow-d));
+  }
+}
+
+/* ---------------------------------------------------------------- 基础 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 数字用等宽变体，seq / 时间戳对齐好看 */
+.tabular,
+.msg-meta,
+.msg-row .sender,
+.me-bar .handle {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 滚动条：标准属性 + webkit 前缀两套写法，颜色必须一致 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-weak);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 键盘焦点：只在键盘操作时出现，鼠标点击不闪 */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ---------------------------------------------------------------- 控件 */
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  padding: 8px 15px;
+  border-radius: 10px;
+  font-weight: 500;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.08s ease,
+    box-shadow 0.16s ease;
+}
+button:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--border-strong);
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: linear-gradient(180deg, var(--primary-2), var(--primary));
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(24, 50, 120, 0.18), 0 6px 16px rgba(59, 108, 246, 0.24);
+}
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--primary-2), var(--primary-2));
+  box-shadow: 0 2px 4px rgba(24, 50, 120, 0.2), 0 10px 22px rgba(59, 108, 246, 0.3);
+}
+
+button.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-weak);
+  padding: 7px 9px;
+  box-shadow: none;
+  font-weight: 500;
+}
+button.ghost:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: var(--panel);
+  outline: none;
+  width: 100%;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-weak);
+  opacity: 1;
+}
+input:focus,
+textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+/* ---------------------------------------------------------------- 登录页 */
+
+.login-page {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+  /* 两团柔光，纯 CSS 打光，不用图片资源 */
+  background-image: radial-gradient(
+      55rem 30rem at 12% -10%,
+      color-mix(in srgb, var(--primary) 22%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      40rem 26rem at 105% 110%,
+      color-mix(in srgb, var(--primary-2) 18%, transparent),
+      transparent 70%
+    );
+}
+
+.login-card {
+  width: 372px;
+  max-width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 30px 26px 24px;
+  box-shadow: var(--shadow);
+}
+
+/* 品牌标记：渐变方块 + 单字，不依赖图片 */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  background: linear-gradient(140deg, var(--primary-2), var(--primary));
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 19px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--primary) 40%, transparent);
+  flex: none;
+}
+.brand h1 {
+  font-size: 18px;
+  margin: 0;
+  letter-spacing: 0.2px;
+}
+.brand .sub {
+  margin: 1px 0 0;
+  color: var(--text-weak);
+  font-size: 12px;
+}
+
+.login-card label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-weak);
+  margin: 14px 0 6px;
+}
+.login-card .actions {
+  margin-top: 22px;
+  display: flex;
+  gap: 9px;
+}
+.login-card .actions button {
+  flex: 1;
+}
+.login-card .actions button.primary {
+  flex: 1.6;
+}
+.form-error {
+  margin-top: 12px;
+  color: var(--danger);
+  font-size: 12.5px;
+  min-height: 18px;
+}
+
+/* 测试账号快捷键 */
+.demo-row {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.demo-row > span {
+  font-size: 11.5px;
+  color: var(--text-weak);
+  margin-right: 2px;
+}
+.chip {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text-weak);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chip:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  background: var(--primary-soft);
+}
+
+/* ---------------------------------------------------------------- 主界面 */
+
+.app-shell {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 312px 1fr;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+
+.me-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 14px 12px;
+}
+.me-bar .name {
+  font-weight: 650;
+  line-height: 1.3;
+}
+.me-bar .handle {
+  font-size: 11.5px;
+  color: var(--text-weak);
+}
+.me-bar .conn {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text-weak);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+/* 连接状态点，靠 ::before 画，不额外加 DOM */
+.me-bar .conn::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-weak);
+}
+.me-bar .conn.on {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+  color: var(--ok);
+}
+.me-bar .conn.on::before {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent);
+}
+
+.sidebar-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px 10px;
+  align-items: center;
+}
+.sidebar-actions input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 99px;
+  padding: 7px 13px;
+  font-size: 13px;
+  background: var(--panel-2);
+}
+.sidebar-actions input:focus {
+  background: var(--panel);
+}
+.sidebar-actions button.ghost {
+  font-size: 12.5px;
+  padding: 6px 9px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.conv-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 8px 12px;
+}
+
+.conv-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 9px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.14s ease;
+}
+.conv-item:hover {
+  background: var(--panel-2);
+}
+.conv-item.active {
+  background: var(--primary-soft);
+}
+/* 选中态左侧竖条：用 ::before，不占布局、不改变宽度 */
+.conv-item.active::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 3px;
+  height: 22px;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+}
+.conv-item .meta {
+  flex: 1;
+  min-width: 0;
+}
+.conv-item .title {
+  font-weight: 550;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.conv-item .title > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conv-item .title .time {
+  font-size: 11px;
+  color: var(--text-weak);
+  margin-left: auto;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.conv-item .preview {
+  color: var(--text-weak);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.badge {
+  background: linear-gradient(180deg, #ff6b6b, var(--danger));
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 99px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.empty-hint {
+  color: var(--text-weak);
+  font-size: 12.5px;
+  text-align: center;
+  padding: 30px 14px;
+  line-height: 1.7;
+}
+
+/* ---------------------------------------------------------------- 头像 */
+
+/*
+ * 头像底色由用户名 hash 出的色相决定（--av-hue，在 App.vue 的 avatarStyle() 里算）。
+ * 同一个人在任何会话、任何时间都是同一个颜色，不用后端存头像也能一眼认出谁是谁。
+ * 没传 --av-hue 时回落到品牌色，保证 .avatar 单独用（如群聊的"群"字头像）也不难看。
+ */
+.avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: linear-gradient(
+    150deg,
+    hsl(var(--av-hue, 222) 82% 66%),
+    hsl(var(--av-hue, 222) 74% 52%)
+  );
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  flex: none;
+  font-size: 15px;
+  user-select: none;
+  box-shadow: 0 2px 8px hsl(var(--av-hue, 222) 70% 50% / 0.28);
+}
+.avatar.group {
+  background: linear-gradient(150deg, #ffb457, #f08c2e);
+  box-shadow: 0 2px 8px rgba(240, 140, 46, 0.28);
+}
+.avatar.sm {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+.avatar.lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  font-size: 22px;
+}
+
+/* ---------------------------------------------------------------- 聊天区 */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.chat-header {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.chat-header .title {
+  font-weight: 650;
+  line-height: 1.3;
+}
+.chat-header .hinfo {
+  flex: 1;
+  min-width: 0;
+}
+.chat-header .hinfo .title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-header .sub {
+  color: var(--text-weak);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* 图标按钮：只有图标、没有文字的按钮，靠 title/aria-label 兜住可访问性。
+   用 borderless + hover 显底色的写法，避免给标题栏加视觉噪音。 */
+.icon-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-weak);
+  font-size: 15px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.icon-btn:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+/* seq 做成小胶囊，一眼能看到"这条会话推进到第几条"，也是演示用的信息 */
+.seq-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text-weak);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * 消息区包一层 .msg-area：滚动容器 .message-list 和浮动的"回到底部"按钮是兄弟，
+ * 按钮才能用 sticky 贴在消息区底边（如果按钮放在滚动容器内部，sticky 会跟着内容滚）。
+ */
+.msg-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.message-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 22px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overscroll-behavior: contain;
+}
+.load-more {
+  align-self: center;
+  font-size: 12px;
+  border-radius: 99px;
+}
+
+/*
+ * 消息列表上下边缘的阴影提示（还有内容没看完）。
+ *
+ * 不监听 scroll 事件：scroll 回调在 JS 线程里，每帧都要读 scrollHeight 强制同步重排；
+ * 而 scroll-state 容器查询由浏览器合成线程判定，滚动时零 JS 参与。
+ * 不支持 scroll-state 的浏览器整块不生效，只是少了阴影，功能不受影响。
+ */
+.message-list {
+  container-type: scroll-state;
+}
+@supports (container-type: scroll-state) {
+  .message-list::before,
+  .message-list::after {
+    content: '';
+    position: sticky;
+    left: 0;
+    right: 0;
+    z-index: 1;
+    block-size: 14px;
+    /* 关键：flex column 里的伪元素默认 flex-shrink:1，内容一溢出就被压成 0 高，
+       阴影会彻底看不见。必须 flex:none 把它钉死在 14px。 */
+    flex: none;
+    /* 负 margin 把占位抵消掉，否则 flex 的 gap 会多出一段空隙 */
+    margin-inline: -22px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.18s ease;
+  }
+  .message-list::before {
+    top: -20px;
+    margin-bottom: -14px;
+    /* 用"背景色 → 透明"的淡出，而不是固定的黑色阴影：
+       阴影色是写死的，深色模式下黑底叠黑影等于没有；淡出跟着 --bg 自动换色。 */
+    background: linear-gradient(to bottom, var(--bg), transparent);
+  }
+  .message-list::after {
+    bottom: -14px;
+    margin-top: -14px;
+    background: linear-gradient(to top, var(--bg), transparent);
+  }
+  @container scroll-state(scrollable: block-start) {
+    .message-list::before {
+      opacity: 1;
+    }
+  }
+  @container scroll-state(scrollable: block-end) {
+    .message-list::after {
+      opacity: 1;
+    }
+  }
+}
+
+/*
+ * "回到底部"浮动按钮。
+ * 父级 .msg-area 是 position: relative，按钮用 absolute 贴底——
+ * 这样它天然跟着输入区走，窗口缩放、输入框长高都不会错位，
+ * 也不像 fixed 那样在手机上跑到键盘下面去。
+ */
+.to-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-weak);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(12, 18, 32, 0.14);
+  z-index: 2;
+}
+.to-bottom:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.to-bottom-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .to-bottom {
+    animation: to-bottom-in 0.2s cubic-bezier(0.22, 0.68, 0.32, 1) both;
+  }
+  @keyframes to-bottom-in {
+    from {
+      opacity: 0;
+      translate: -50% 10px;
+    }
+    to {
+      opacity: 1;
+      translate: -50% 0;
+    }
+  }
+}
+
+/* 日期分隔：一条细线 + 居中的日期，两头用伪元素画线，不用额外 DOM */
+.day-sep {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  margin: 6px 0 2px;
+}
+.day-sep::before,
+.day-sep::after {
+  content: '';
+  flex: 1;
+  block-size: 1px;
+  background: var(--border);
+}
+
+.msg-row {
+  display: flex;
+  gap: 9px;
+  max-width: 76%;
+}
+.msg-row.mine {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+/*
+ * 连发的消息（同一个人、5 分钟内）合并成一组：
+ * 隐藏头像（用 visibility 保住布局宽度，气泡位置才不会被甩动）、收紧上间距。
+ */
+.msg-row.grouped {
+  margin-top: -9px;
+}
+.msg-row.grouped > .avatar {
+  visibility: hidden;
+}
+.msg-row.grouped .msg-body .sender {
+  display: none;
+}
+.msg-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.msg-body .sender {
+  font-size: 11px;
+  color: var(--text-weak);
+  margin: 0 0 4px 3px;
+}
+.msg-row.mine .msg-body .sender {
+  text-align: right;
+  margin: 0 3px 4px 0;
+}
+
+/* 气泡：靠头像那一侧的圆角收小，形成"指向"的视觉暗示 */
+.bubble {
+  background: var(--bubble-other);
+  border: 1px solid var(--border);
+  padding: 9px 13px;
+  border-radius: 14px 14px 14px 5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
+  align-self: flex-start;
+}
+.msg-row.mine .bubble {
+  background: linear-gradient(160deg, var(--bubble-me-2), var(--bubble-me));
+  border-color: transparent;
+  color: #fff;
+  border-radius: 14px 14px 5px 14px;
+  align-self: flex-end;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--bubble-me) 30%, transparent);
+}
+/* 系统消息（如入群提示）：居中细字，不要气泡外观 */
+.msg-row.system {
+  align-self: center;
+  max-width: 90%;
+}
+.msg-row.system .bubble {
+  background: color-mix(in srgb, var(--text-weak) 10%, transparent);
+  border: none;
+  box-shadow: none;
+  color: var(--text-weak);
+  font-size: 12px;
+  padding: 3px 12px;
+  border-radius: 99px;
+}
+
+.msg-meta {
+  font-size: 11px;
+  color: var(--text-weak);
+  margin-top: 4px;
+  margin-inline: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.msg-row.mine .msg-meta {
+  text-align: right;
+}
+.msg-meta .dup {
+  color: #c47f22;
+}
+.msg-meta .pending {
+  color: var(--text-weak);
+  opacity: 0.85;
+}
+
+/* ---------------------------------------------------------------- 输入区 */
+
+.composer {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px 18px 16px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+.composer textarea {
+  /* 关键：让浏览器自己按内容撑高，不用 JS 算 scrollHeight（见文件头第 1 条） */
+  field-sizing: content;
+  resize: none;
+  min-block-size: 3lh;
+  max-block-size: 8lh;
+  width: 100%;
+  background: var(--panel-2);
+  border-radius: 12px;
+  line-height: 1.5;
+}
+.composer textarea:focus {
+  background: var(--panel);
+}
+.composer > div {
+  flex: 1;
+  min-width: 0;
+}
+.composer .hint {
+  font-size: 11px;
+  color: var(--text-weak);
+  margin-top: 5px;
+  padding-left: 3px;
+}
+.composer > button.primary {
+  flex: none;
+  height: 40px;
+  padding: 0 20px;
+  border-radius: 12px;
+}
+
+/* 空态：一个柔和的圆形背景 + 文案，不留白得刺眼 */
+.chat-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  color: var(--text-weak);
+  font-size: 13px;
+  text-align: center;
+  padding: 20px;
+}
+.chat-empty::before {
+  content: '💬';
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 28px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+/* ---------------------------------------------------------------- 弹窗 */
+
+dialog {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0;
+  width: 400px;
+  max-width: calc(100vw - 40px);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 64px rgba(10, 15, 30, 0.28);
+}
+dialog::backdrop {
+  background: rgba(12, 16, 26, 0.42);
+  backdrop-filter: blur(2px);
+}
+dialog .dlg-head {
+  padding: 18px 20px 2px;
+  font-weight: 650;
+  font-size: 15px;
+}
+dialog .dlg-body {
+  padding: 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+dialog .dlg-body label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-weak);
+  margin-top: 4px;
+}
+dialog .dlg-foot {
+  padding: 4px 20px 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.user-pick {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.user-pick:hover {
+  background: var(--panel-2);
+}
+.user-pick.picked {
+  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--primary) 35%, transparent);
+}
+.user-pick .uname {
+  flex: 1;
+  min-width: 0;
+}
+.uhandle {
+  font-size: 11px;
+  color: var(--text-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tick {
+  color: var(--primary);
+  font-weight: 700;
+}
+.muted {
+  color: var(--text-weak);
+  font-size: 12px;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+.dot-online {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+
+/* ---------------------------------------------------------------- 提示 */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  translate: -50% 0;
+  background: var(--text);
+  color: var(--panel);
+  padding: 10px 18px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 10px 30px rgba(10, 15, 30, 0.28);
+  z-index: 10;
+  max-width: min(90vw, 520px);
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- 动效 */
+
+/* 默认静态，仅在用户没有要求减少动效时才加动画（见文件头第 5 条） */
+@media (prefers-reduced-motion: no-preference) {
+  .msg-row {
+    animation: msg-in 0.22s cubic-bezier(0.22, 0.68, 0.32, 1) both;
+  }
+  @keyframes msg-in {
+    from {
+      opacity: 0;
+      translate: 0 6px;
+      scale: 0.99;
+    }
+    to {
+      opacity: 1;
+      translate: 0 0;
+      scale: 1;
+    }
+  }
+
+  .toast {
+    animation: toast-in 0.2s ease both;
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      translate: -50% 8px;
+    }
+    to {
+      opacity: 1;
+      translate: -50% 0;
+    }
+  }
+
+  /* 弹窗的进出场交给下面的 top-layer transition 处理，这里不再挂 keyframes，
+     否则动画和过渡会同时改 opacity / scale，互相抢属性。 */
+}
+
+/* ---------------------------------------------------------------- 会话信息面板 */
+
+/*
+ * 弹窗进出 top-layer 的过渡。
+ *
+ * dialog 一旦 close()，display 会瞬间变 none，普通 transition 根本没机会跑完；
+ * 必须把 display / overlay 也列进 transition-property，并配 transition-behavior: allow-discrete，
+ * 浏览器才会把"离散属性"延到过渡结束后再切。
+ * transition-behavior 单独一行写：老浏览器不认识这条，会丢掉这一行而不是整条 transition 失效。
+ */
+dialog {
+  transition-property: opacity, transform, display, overlay;
+  transition-duration: 0.18s;
+  transition-timing-function: cubic-bezier(0.22, 0.68, 0.32, 1);
+  transition-behavior: allow-discrete;
+  opacity: 1;
+  transform: scale(1);
+}
+@starting-style {
+  dialog[open] {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+dialog:not([open]) {
+  opacity: 0;
+  transform: scale(0.98);
+}
+dialog::backdrop {
+  transition-property: opacity, display, overlay;
+  transition-duration: 0.18s;
+  transition-behavior: allow-discrete;
+  opacity: 1;
+}
+@starting-style {
+  dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+dialog:not([open])::backdrop {
+  opacity: 0;
+}
+
+.info-dlg {
+  width: 440px;
+}
+.info-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 0 14px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.info-title {
+  font-weight: 650;
+  font-size: 16px;
+  margin-top: 3px;
+}
+.info-sub {
+  color: var(--text-weak);
+  font-size: 12px;
+}
+.info-kv {
+  display: flex;
+  gap: 10px;
+  padding: 5px 0;
+  align-items: baseline;
+}
+.info-kv .k {
+  flex: none;
+  width: 64px;
+  color: var(--text-weak);
+  font-size: 12px;
+}
+.info-kv .v {
+  flex: 1;
+  min-width: 0;
+}
+.info-section {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-weak);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.member-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 10px 6px;
+  padding: 8px 0 4px;
+}
+.member {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  position: relative;
+}
+.member-name {
+  font-size: 11.5px;
+  color: var(--text-weak);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.member .dot-online {
+  position: absolute;
+  top: 20px;
+  right: calc(50% - 20px);
+}
+
+/* ---------------------------------------------------------------- 好友 / 搜索 */
+
+/* 两个新弹窗都比默认 dialog 宽一点：里面是"多选列表"和"结果列表"，
+   400px 一行放不下"昵称 + @handle + 在线点 + 两个按钮" */
+.friend-dlg,
+.search-dlg {
+  width: 480px;
+}
+
+.dlg-tip {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-weak);
+  background: var(--panel-2);
+  border-radius: 9px;
+  padding: 8px 10px;
+}
+
+/* 候选/好友列表固定高度 + 自己滚，避免人多了把整个弹窗顶出屏幕
+   （dialog 默认 max-height 是 100%，超出会整页滚，那样 footer 按钮就找不到了） */
+.friend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 210px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.friend-list .user-pick {
+  flex: none;
+}
+
+/* 小按钮：只在好友行里用，比全局 button 矮一档，免得一行里高度撑爆 */
+.mini {
+  font-size: 11.5px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-weak);
+  cursor: pointer;
+  flex: none;
+}
+.mini:hover {
+  color: var(--primary);
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+}
+.mini.danger:hover {
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 45%, var(--border));
+}
+
+/* 分段控件：当前会话 / 全部会话。
+   用 .on 而不是 :checked，因为这里不是表单控件、不需要提交值 */
+.seg {
+  display: flex;
+  gap: 6px;
+}
+.seg .ghost {
+  flex: 1;
+  border-radius: 9px;
+}
+.seg .ghost.on {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: color-mix(in oklab, var(--primary) 35%, transparent);
+}
+.seg .ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.hit {
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+.hit:hover {
+  background: var(--panel-2);
+  border-color: color-mix(in oklab, var(--primary) 30%, var(--border));
+}
+.hit-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-weak);
+}
+.hit-conv {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hit-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.hit-body {
+  font-size: 13px;
+  line-height: 1.65;
+  margin-top: 3px;
+  /* 消息可能很长，搜索结果只给两行预览；完整内容点进会话看 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.hit-meta {
+  font-size: 11px;
+  color: var(--text-weak);
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 从搜索结果跳转过来时，目标消息闪一下背景再淡出。
+   用 outline 而不是 background，是为了不改变布局（background 也不改，但
+   outline 能画在 border 外面，气泡本身的颜色完全不受影响） */
+.msg-row.hl .bubble {
+  animation: hl-flash 2.4s ease-out;
+}
+@keyframes hl-flash {
+  0%,
+  60% {
+    outline: 2px solid color-mix(in oklab, var(--primary) 70%, transparent);
+    outline-offset: 3px;
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 3px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg-row.hl .bubble {
+    animation-duration: 0.01s;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog,
+  dialog::backdrop {
+    transition-duration: 0.01s;
+  }
+}
+
+/* ---------------------------------------------------------------- 撤回 / 已读 / 群管理 */
+
+/* 撤回态的气泡：不能用原来的气泡底色。
+   撤回不是"一条内容为空的普通消息"，它要看起来像"这里曾经有过东西，现在没了"，
+   所以用虚线边框 + 弱化字色，而不是实心气泡。 */
+.bubble.revoked {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-weak);
+  font-size: 12.5px;
+  font-style: italic;
+  box-shadow: none;
+}
+.msg-row.mine .bubble.revoked {
+  background: transparent;
+  color: var(--text-weak);
+}
+
+/* 消息下方元信息里的小按钮（查已读 / 撤回）。
+   默认几乎隐形，hover 到这条消息才明显起来 —— 一屏 20 条消息，如果按钮都实心可见，
+   整个聊天区会被这些次要操作噪音填满。 */
+.meta-btn {
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.6;
+  border-radius: 99px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.msg-row:hover .meta-btn {
+  opacity: 1;
+  border-color: var(--border);
+}
+.meta-btn:hover {
+  color: var(--primary);
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+}
+.meta-btn.danger:hover {
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 45%, var(--border));
+}
+
+/* 群成员行：和 .user-pick 同一套骨架，只是不能点选 */
+.picked-off {
+  cursor: default;
+}
+.uinfo {
+  flex: 1;
+  min-width: 0;
+}
+.uinfo .name {
+  font-size: 13.5px;
+  font-weight: 560;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.owner-tag {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 99px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in oklab, var(--primary) 30%, transparent);
+}
+.acts {
+  display: flex;
+  gap: 5px;
+  flex: none;
+}
+
+/* 破坏性操作（退出群聊）用危险色文字，但保持 ghost 的轻量外观：
+   它不是主按钮，不该用实心红抢注意力。 */
+.danger-text {
+  color: var(--danger) !important;
+}
+.danger-text:hover {
+  background: color-mix(in oklab, var(--danger) 10%, transparent) !important;
+  border-color: color-mix(in oklab, var(--danger) 35%, var(--border)) !important;
+}
+
+/* ---------------------------------------------------------------- 响应式 */
+
+/* 窄屏（手机/小窗）收成单列：侧栏变成抽屉式的整屏列表 */
+@media (max-width: 720px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    border-right: none;
+  }
+  .msg-row {
+    max-width: 88%;
+  }
+  .composer {
+    padding: 10px 12px 12px;
+  }
+  .message-list {
+    padding: 16px 14px 10px;
+  }
+  .login-card {
+    padding: 26px 20px 20px;
+  }
+}

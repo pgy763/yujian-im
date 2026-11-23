@@ -1,0 +1,29 @@
+package com.yujian.im.common;
+
+import lombok.Getter;
+
+/**
+ * 业务异常。code 直接透给前端，前端按 code 分流文案。
+ */
+@Getter
+public class BizException extends RuntimeException {
+
+    private final int code;
+
+    public BizException(int code, String message) {
+        super(message);
+        this.code = code;
+    }
+
+    public static BizException of(String message) {
+        return new BizException(400, message);
+    }
+
+    public static BizException unauthorized(String message) {
+        return new BizException(401, message);
+    }
+
+    public static BizException forbidden(String message) {
+        return new BizException(403, message);
+    }
+}

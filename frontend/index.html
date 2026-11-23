@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      声明本页同时支持浅色/深色两套配色（modern-web-guidance: dark-mode）。
+      放在 <head> 里是为了让浏览器在渲染第一帧之前就知道该用哪套，
+      避免深色系统上先闪一下白底（FOUC）。
+    -->
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="鱼见 IM —— Netty 长连接 + 自研二进制协议的即时通讯系统" />
+    <title>鱼见 IM</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

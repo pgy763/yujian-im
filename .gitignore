@@ -1,0 +1,23 @@
+# 构建产物
+backend/target/
+tools/loadtest/target/
+frontend/dist/
+frontend/node_modules/
+
+# 本地运行时
+*.log
+*.pid
+
+# 截图里的浏览器用户数据（每次跑 shot_ui.py 都会生成，体积很大）
+_shots/_edge_profile/
+_shots/_edge_probe/
+
+# 测试脚本产生的临时态
+tools/verify/tokens.json
+
+# IDE / 系统
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

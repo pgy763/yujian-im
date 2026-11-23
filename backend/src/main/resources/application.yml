@@ -1,0 +1,94 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: yujian-im
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/yujian_im?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: root
+    password: "123456"
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  sql:
+    init:
+      # 启动时执行 db/schema.sql，脚本用 CREATE TABLE IF NOT EXISTS 保证幂等
+      mode: always
+      schema-locations: classpath:db/schema.sql
+      continue-on-error: false
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      password:
+      database: 0
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 32
+          max-idle: 16
+          min-idle: 4
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    # 开发期想看到每条 SQL 就把下面两行放开：能看到索引走没走对。
+    # 但别长期开着——StdOutImpl 是每条 SQL 同步写一次 System.out，
+    # 压测时它的开销能盖过业务本身（本项目实测 P50 从 ~20ms 被拖到 ~62ms）。
+    # log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: input   # ID 由我们自己用雪花生成，不让 MyBatis-Plus 用自增
+
+im:
+  netty:
+    # 原生 TCP 端口：给移动端/桌面端/压测工具用，省流量
+    tcp-port: 9000
+    # WebSocket 端口：浏览器拿不到裸 TCP，必须走 WebSocket
+    ws-port: 9001
+    ws-path: /im
+    # 读空闲超过 90s 断开（客户端应每 30s 发一次心跳）
+    reader-idle-seconds: 90
+    # 单机多 EventLoopGroup 线程数，0 表示用 CPU 核数
+    boss-threads: 1
+    worker-threads: 0
+    # 单连接每秒最多处理多少条上行指令，超过就丢（防刷）
+    max-qps-per-channel: 200
+  jwt:
+    # 生产必须换成环境变量注入的随机串，长度 >= 32 字节，否则 HS256 会抛 WeakKeyException
+    secret: "yujian-im-jwt-secret-key-please-change-in-production-2026"
+    # token 有效期 7 天
+    expire-hours: 168
+  snowflake:
+    datacenter-id: 1
+  offline:
+    # 一次拉取离线消息的最大条数，避免掉线三天的用户一次拉十万条把内存打爆
+    batch-size: 200
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: yujian-im
+
+logging:
+  level:
+    root: INFO
+    com.yujian.im: DEBUG
+    io.netty: INFO
