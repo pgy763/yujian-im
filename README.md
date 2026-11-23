@@ -4,6 +4,16 @@
 
 做这个项目要回答的问题是：**一条消息从 A 的手机到 B 的手机，怎么保证不丢、不重、不乱序、不重复打扰？**
 
+![聊天主界面](_shots/ui-10-chat-light.png)
+
+| 深色模式 | 会话信息 |
+| --- | --- |
+| ![深色模式](_shots/ui-7-dark-chat.png) | ![会话信息](_shots/ui-8-info-dialog.png) |
+
+| 群成员管理 | 查找聊天记录 | 消息撤回 |
+| --- | --- | --- |
+| ![群成员](_shots/ui-17-group-members.png) | ![搜索](_shots/ui-12-search-dialog.png) | ![撤回](_shots/ui-15-revoke.png) |
+
 ---
 
 ## 目录
